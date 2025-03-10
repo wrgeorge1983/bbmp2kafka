@@ -1,7 +1,7 @@
 syntax = "proto3";
 
-package cloudflare.net.bbmp;
-option go_package = "github.com/cloudflare/bbmp2kafka/bbmp";
+package wrgeorge1983.net.bbmp;
+option go_package = "github.com/wrgeorge1983/bbmp2kafka/bbmp";
 
 
 import "net/api/net.proto";

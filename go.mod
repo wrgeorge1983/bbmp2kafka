@@ -1,4 +1,4 @@
-module github.com/cloudflare/bbmp2kafka
+module github.com/wrgeorge1983/bbmp2kafka
 
 go 1.19
 

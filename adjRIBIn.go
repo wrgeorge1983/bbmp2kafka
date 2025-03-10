@@ -10,7 +10,7 @@ package main
 import (
 	"sync/atomic"
 
-	"github.com/cloudflare/bbmp2kafka/protos/bbmp"
+	"github.com/wrgeorge1983/bbmp2kafka/protos/bbmp"
 
 	"github.com/Shopify/sarama"
 	"google.golang.org/protobuf/proto"
