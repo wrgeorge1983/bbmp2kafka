@@ -8,6 +8,7 @@
 package main
 
 import (
+	"github.com/bio-routing/bio-rd/protocols/bgp/mplri"
 	"sync/atomic"
 
 	"github.com/wrgeorge1983/bbmp2kafka/protos/bbmp"
@@ -19,6 +20,7 @@ import (
 	"github.com/bio-routing/bio-rd/route"
 	"github.com/bio-routing/bio-rd/routingtable"
 	"github.com/bio-routing/bio-rd/routingtable/filter"
+	vrf "github.com/bio-routing/bio-rd/routingtable/vrf"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -29,14 +31,21 @@ type adjRIBInFactory struct {
 	tokenBucket *tokenBucket
 }
 
+//type enrichedPath struct {
+//	Path         *route.Path
+//	MPReachAttrs *packet.MultiProtocolReachNLRI
+//}
+
 type adjRIBin struct {
 	sessionAttrs routingtable.SessionAttrs
 	producer     sarama.SyncProducer
 	kafkaTopic   string
 	tokenBucket  *tokenBucket
+	//clients      map[routingtable.RouteTableClient]struct{}
+	//mu           sync.Mutex
 }
 
-func (a *adjRIBInFactory) New(exportFilterChain filter.Chain, contributingASNs *routingtable.ContributingASNs, sessionAttrs routingtable.SessionAttrs) routingtable.AdjRIBIn {
+func (a *adjRIBInFactory) New(exportFilterChain filter.Chain, vrf *vrf.VRF, sessionAttrs routingtable.SessionAttrs) routingtable.AdjRIBIn {
 	return &adjRIBin{
 		sessionAttrs: sessionAttrs,
 		producer:     a.producer,
@@ -46,21 +55,63 @@ func (a *adjRIBInFactory) New(exportFilterChain filter.Chain, contributingASNs *
 }
 
 func (a *adjRIBin) createBBMPUnicastMonitoringMessage(pfx *net.Prefix, path *route.Path, announcement bool) []byte {
-	bbmpMsg := bbmp.BBMPUnicastMonitoringMessage{
-		RouterIp:      a.sessionAttrs.RouterIP.ToProto(),
-		LocalBpgIp:    a.sessionAttrs.LocalIP.ToProto(),
-		NeighborBgpIp: a.sessionAttrs.PeerIP.ToProto(),
-		LocalAs:       a.sessionAttrs.LocalASN,
-		RemoteAs:      a.sessionAttrs.PeerASN,
-		Announcement:  announcement,
-		BgpPath:       path.BGPPath.ToProto(),
-		Pfx:           pfx.ToProto(),
-		Timestamp:     path.LTime,
+	var afi uint16
+	var safi uint8
+	var labels []mplri.LabelStackEntry
+	var routeDistinguisher *mplri.RouteDistinguisher
+
+	if path.BGPPath.MPReachNLRI != nil {
+		afi = path.BGPPath.MPReachNLRI.AFI
+		safi = path.BGPPath.MPReachNLRI.SAFI
+		labels = path.BGPPath.MPReachNLRI.NLRI.LabelStack
+		routeDistinguisher = path.BGPPath.MPReachNLRI.NLRI.RouteDistinguisher
+	} else {
+		afi = uint16(0)
+		safi = uint8(0)
 	}
 
+	var rdValue *bbmp.RouteDistinguisher
+	if routeDistinguisher != nil {
+		rdValue = &bbmp.RouteDistinguisher{
+			Value: uint64(*routeDistinguisher),
+		}
+	}
+	rawLabels := make([]uint32, len(labels))
+	for i, l := range labels {
+		rawLabels[i] = l.GetLabel()
+	}
+
+	routeMonitorMsg := bbmp.RouteMonitoringMessage{
+		RouterIp:           a.sessionAttrs.RouterIP.ToProto(),
+		LocalBpgIp:         a.sessionAttrs.LocalIP.ToProto(),
+		NeighborBgpIp:      a.sessionAttrs.PeerIP.ToProto(),
+		LocalAs:            a.sessionAttrs.LocalASN,
+		RemoteAs:           a.sessionAttrs.PeerASN,
+		Announcement:       announcement,
+		Timestamp:          path.LTime,
+		Afi:                uint32(afi),
+		Safi:               uint32(safi),
+		Pfx:                pfx.ToProto(),
+		BgpPath:            path.BGPPath.ToProto(),
+		Labels:             rawLabels,
+		Nexthop:            path.BGPPath.BGPPathA.NextHop.ToProto(),
+		RouteDistinguisher: rdValue,
+	}
+	//bbmpMsg := bbmp.BBMPUnicastMonitoringMessage{
+	//	RouterIp:      a.sessionAttrs.RouterIP.ToProto(),
+	//	LocalBpgIp:    a.sessionAttrs.LocalIP.ToProto(),
+	//	NeighborBgpIp: a.sessionAttrs.PeerIP.ToProto(),
+	//	LocalAs:       a.sessionAttrs.LocalASN,
+	//	RemoteAs:      a.sessionAttrs.PeerASN,
+	//	Announcement:  announcement,
+	//	BgpPath:       path.BGPPath.ToProto(),
+	//	Pfx:           pfx.ToProto(),
+	//	Timestamp:     path.LTime,
+	//}
+
 	msg := bbmp.BBMPMessage{
-		MessageType:                  bbmp.BBMPMessage_RouteMonitoringMessage,
-		BbmpUnicastMonitoringMessage: &bbmpMsg,
+		MessageType:            bbmp.BBMPMessage_RouteMonitoringMessage,
+		RouteMonitoringMessage: &routeMonitorMsg,
 	}
 
 	msgBytes, err := proto.Marshal(&msg)
