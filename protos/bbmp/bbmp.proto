@@ -32,4 +32,7 @@ message BBMPUnicastMonitoringMessage {
     bio.net.Prefix pfx = 7;
     bio.route.BGPPath bgp_path = 8;
     uint32 timestamp = 9;
+    uint64 route_distinguisher = 10;
+    bool is_vpn = 11;
+    uint32 address_family = 12; // 1 for IPv4, 2 for IPv6
 }

@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -76,9 +78,33 @@ func lookupAddrs(hostport string) ([]string, error) {
 }
 
 func main() {
+	debugMode := flag.Bool("debug", false, "Enable debug logging")
 	flag.Parse()
 
+	// Configure logging first
+	if *debugMode {
+		log.SetLevel(log.DebugLevel)
+		log.Info("Debug logging enabled")
+	}
+
 	log.Info("BioBMP BMP receiver bbmp2kafka starting...")
+	log.Info("VPNv4/VPNv6 support has been enabled")
+	
+	// bio-rd shares the same logrus instance, so setting our local log level
+	// should also affect bio-rd's logging
+	
+	// Set the formatter to include caller information in debug mode
+	if *debugMode {
+		log.SetFormatter(&log.TextFormatter{
+			DisableColors: false,
+			FullTimestamp: true,
+			CallerPrettyfier: func(f *runtime.Frame) (string, string) {
+				return fmt.Sprintf("%s()", f.Function), fmt.Sprintf("%s:%d", path.Base(f.File), f.Line)
+			},
+		})
+		log.SetReportCaller(true)
+		log.Debug("Starting with bio-rd BGP library debug logging enabled")
+	}
 
 	if *kafkaCluster == "" {
 		log.Fatal("No kafka.cluster service address given.")
@@ -156,11 +182,15 @@ func main() {
 	atomic.StoreInt32(&healthy, 1)
 
 	// Start BMP receiver
+	log.Infof("Starting BMP listener on %s", *bmpListenAddr)
+	
 	err = b.Listen(*bmpListenAddr)
 	if err != nil {
 		log.Fatalf("BMP receiver listen failed: %v", err)
 	}
+	log.Info("BMP listener started successfully - waiting for connections")
 
+	log.Info("Starting BMP server")
 	err = b.Serve()
 	if err != nil {
 		log.WithError(err).Fatal("error while serving BMP connections")

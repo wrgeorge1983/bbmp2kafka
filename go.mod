@@ -10,7 +10,7 @@ require (
 	google.golang.org/protobuf v1.33.0
 )
 
-// replace github.com/bio-routing/bio-rd => github.com/wrgeorge1983/bio-rd v0.1.10-0.20250318050152-d6b4b22fdf52
+replace github.com/bio-routing/bio-rd => github.com/wrgeorge1983/bio-rd v0.1.10-0.20250318050152-d6b4b22fdf52
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
