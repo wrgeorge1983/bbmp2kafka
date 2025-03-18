@@ -189,7 +189,8 @@ func (f *fsmAddressFamily) dispose() {
 }
 
 func (f *fsmAddressFamily) processUpdate(u *packet.BGPUpdate, bmpPostPolicy bool, timestamp uint32) {
-	if f.safi != packet.SAFIUnicast {
+	// Support both unicast and VPN unicast SAFIs
+	if f.safi != packet.SAFIUnicast && f.safi != packet.SAFIVPNUnicast && f.safi != packet.SAFILabeledUnicast {
 		return
 	}
 
@@ -199,8 +200,11 @@ func (f *fsmAddressFamily) processUpdate(u *packet.BGPUpdate, bmpPostPolicy bool
 			f.endOfRIBMarkerReceived.Store(true)
 		}
 
-		f.withdraws(u, bmpPostPolicy, timestamp)
-		f.updates(u, bmpPostPolicy, timestamp)
+		// Process legacy NLRI withdraws and updates for IPv4 unicast only (not for VPNv4)
+		if f.safi == packet.SAFIUnicast {
+			f.withdraws(u, bmpPostPolicy, timestamp)
+			f.updates(u, bmpPostPolicy, timestamp)
+		}
 	}
 	if f.afi == packet.AFIIPv6 {
 		if u.IsEndOfRIBMarker() {

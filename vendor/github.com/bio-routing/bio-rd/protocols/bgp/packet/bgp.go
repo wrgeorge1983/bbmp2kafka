@@ -105,6 +105,7 @@ const (
 	// Sub-Address Familiy Identifiers
 	SAFIUnicast        = 1
 	SAFILabeledUnicast = 4
+	SAFIVPNUnicast     = 128
 
 	// Capabilities
 	CapabilitiesParamType       = 2
@@ -189,6 +190,20 @@ func AFIName(afi uint16) string {
 		return "IPv6"
 	default:
 		return "Unknown AFI"
+	}
+}
+
+// SAFIName returns the name of a sub-address family
+func SAFIName(safi uint8) string {
+	switch safi {
+	case SAFIUnicast:
+		return "Unicast"
+	case SAFILabeledUnicast:
+		return "LabeledUnicast"
+	case SAFIVPNUnicast:
+		return "VPNUnicast"
+	default:
+		return "Unknown SAFI"
 	}
 }
 

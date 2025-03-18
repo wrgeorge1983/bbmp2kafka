@@ -73,6 +73,8 @@ type FSM struct {
 	ribsInitialized bool
 	ipv4Unicast     *fsmAddressFamily
 	ipv6Unicast     *fsmAddressFamily
+	ipv4VPNUnicast  *fsmAddressFamily
+	ipv6VPNUnicast  *fsmAddressFamily
 
 	supports4OctetASN bool
 
@@ -136,6 +138,14 @@ func (fsm *FSM) replaceImportFilterChain(c filter.Chain) {
 	if fsm.ipv6Unicast != nil {
 		fsm.ipv6Unicast.replaceImportFilterChain(c)
 	}
+	
+	if fsm.ipv4VPNUnicast != nil {
+		fsm.ipv4VPNUnicast.replaceImportFilterChain(c)
+	}
+	
+	if fsm.ipv6VPNUnicast != nil {
+		fsm.ipv6VPNUnicast.replaceImportFilterChain(c)
+	}
 }
 
 func (fsm *FSM) replaceExportFilterChain(c filter.Chain) {
@@ -146,6 +156,14 @@ func (fsm *FSM) replaceExportFilterChain(c filter.Chain) {
 	if fsm.ipv6Unicast != nil {
 		fsm.ipv6Unicast.replaceExportFilterChain(c)
 	}
+	
+	if fsm.ipv4VPNUnicast != nil {
+		fsm.ipv4VPNUnicast.replaceExportFilterChain(c)
+	}
+	
+	if fsm.ipv6VPNUnicast != nil {
+		fsm.ipv6VPNUnicast.replaceExportFilterChain(c)
+	}
 }
 
 func (fsm *FSM) updateLastUpdateOrKeepalive() {
@@ -153,15 +171,20 @@ func (fsm *FSM) updateLastUpdateOrKeepalive() {
 }
 
 func (fsm *FSM) addressFamily(afi uint16, safi uint8) *fsmAddressFamily {
-	if safi != packet.SAFIUnicast {
+	// Only support unicast and VPN unicast
+	if safi != packet.SAFIUnicast && safi != packet.SAFIVPNUnicast {
 		return nil
 	}
 
-	switch afi {
-	case packet.AFIIPv4:
+	switch {
+	case afi == packet.AFIIPv4 && safi == packet.SAFIUnicast:
 		return fsm.ipv4Unicast
-	case packet.AFIIPv6:
+	case afi == packet.AFIIPv6 && safi == packet.SAFIUnicast:
 		return fsm.ipv6Unicast
+	case afi == packet.AFIIPv4 && safi == packet.SAFIVPNUnicast:
+		return fsm.ipv4VPNUnicast
+	case afi == packet.AFIIPv6 && safi == packet.SAFIVPNUnicast:
+		return fsm.ipv6VPNUnicast
 	default:
 		return nil
 	}

@@ -123,8 +123,16 @@ func (r *Router) Ready(vrf uint64, afi uint16) (bool, error) {
 		var fsmAfi *fsmAddressFamily
 		if afi == 4 {
 			fsmAfi = n.fsm.ipv4Unicast
+			// Check VPNv4 if available
+			if n.fsm.ipv4VPNUnicast != nil && !n.fsm.ipv4VPNUnicast.endOfRIBMarkerReceived.Load() {
+				return false, fmt.Errorf("VPNv4 end of rib not yet received")
+			}
 		} else {
 			fsmAfi = n.fsm.ipv6Unicast
+			// Check VPNv6 if available
+			if n.fsm.ipv6VPNUnicast != nil && !n.fsm.ipv6VPNUnicast.endOfRIBMarkerReceived.Load() {
+				return false, fmt.Errorf("VPNv6 end of rib not yet received")
+			}
 		}
 
 		if !fsmAfi.endOfRIBMarkerReceived.Load() {
@@ -419,6 +427,7 @@ func (r *Router) processPeerUpNotification(msg *bmppkt.PeerUpNotification) error
 
 	fsm.peer.configureBySentOpen(sentOpen)
 
+	// Initialize IPv4 unicast RIB
 	rib4, found := fsm.peer.vrf.RIBByName("inet.0")
 	if !found {
 		return fmt.Errorf("unable to get inet RIB")
@@ -429,16 +438,75 @@ func (r *Router) processPeerUpNotification(msg *bmppkt.PeerUpNotification) error
 	}, fsm)
 	fsm.ipv4Unicast.bmpInit()
 
+	// Initialize IPv6 unicast RIB
 	rib6, found := fsm.peer.vrf.RIBByName("inet6.0")
 	if !found {
 		return fmt.Errorf("unable to get inet6 RIB")
 	}
-
 	fsm.ipv6Unicast = newFSMAddressFamily(packet.AFIIPv6, packet.SAFIUnicast, &peerAddressFamily{
 		rib:               rib6,
 		importFilterChain: filter.NewAcceptAllFilterChain(),
 	}, fsm)
 	fsm.ipv6Unicast.bmpInit()
+	
+	// Check if peer advertises VPNv4 or VPNv6 capability
+	var hasVPNv4Capability, hasVPNv6Capability bool
+	capsList := getCaps(recvOpen.OptParams)
+	for _, caps := range capsList {
+		for _, cap := range caps {
+			if cap.Code == packet.MultiProtocolCapabilityCode {
+				mpCap := cap.Value.(packet.MultiProtocolCapability)
+				if mpCap.AFI == packet.AFIIPv4 && mpCap.SAFI == packet.SAFIVPNUnicast {
+					hasVPNv4Capability = true
+				}
+				if mpCap.AFI == packet.AFIIPv6 && mpCap.SAFI == packet.SAFIVPNUnicast {
+					hasVPNv6Capability = true
+				}
+			}
+		}
+	}
+	
+	// If peer has VPNv4 capability, initialize VPNv4 RIB
+	if hasVPNv4Capability {
+		// Create dedicated RIB for VPNv4 routes
+		vpnv4RIB, found := fsm.peer.vrf.RIBByName("vpnv4.0")
+		if !found {
+			// If RIB doesn't exist, create it
+			var err error
+			vpnv4RIB, err = fsm.peer.vrf.CreateVPNv4UnicastLocRIB("vpnv4.0")
+			if err != nil {
+				log.Errorf("Unable to create VPNv4 RIB: %v", err)
+			}
+		}
+		
+		// Create VPNv4 address family
+		fsm.ipv4VPNUnicast = newFSMAddressFamily(packet.AFIIPv4, packet.SAFIVPNUnicast, &peerAddressFamily{
+			rib:               vpnv4RIB,
+			importFilterChain: filter.NewAcceptAllFilterChain(),
+		}, fsm)
+		fsm.ipv4VPNUnicast.bmpInit()
+	}
+	
+	// If peer has VPNv6 capability, initialize VPNv6 RIB
+	if hasVPNv6Capability {
+		// Create dedicated RIB for VPNv6 routes
+		vpnv6RIB, found := fsm.peer.vrf.RIBByName("vpnv6.0")
+		if !found {
+			// If RIB doesn't exist, create it
+			var err error
+			vpnv6RIB, err = fsm.peer.vrf.CreateVPNv6UnicastLocRIB("vpnv6.0")
+			if err != nil {
+				log.Errorf("Unable to create VPNv6 RIB: %v", err)
+			}
+		}
+		
+		// Create VPNv6 address family
+		fsm.ipv6VPNUnicast = newFSMAddressFamily(packet.AFIIPv6, packet.SAFIVPNUnicast, &peerAddressFamily{
+			rib:               vpnv6RIB,
+			importFilterChain: filter.NewAcceptAllFilterChain(),
+		}, fsm)
+		fsm.ipv6VPNUnicast.bmpInit()
+	}
 
 	fsm.state = newOpenSentState(fsm)
 	openSent := fsm.state.(*openSentState)
@@ -470,10 +538,27 @@ func (r *Router) processPeerUpNotification(msg *bmppkt.PeerUpNotification) error
 func (n *neighbor) registerClients(clients map[afiClient]struct{}) {
 	for ac := range clients {
 		if ac.afi == packet.AFIIPv4 {
-			n.fsm.ipv4Unicast.adjRIBIn.Register(ac.client)
+			// Register for IPv4 unicast
+			if n.fsm.ipv4Unicast != nil {
+				n.fsm.ipv4Unicast.adjRIBIn.Register(ac.client)
+			}
+			
+			// Register for IPv4 VPN unicast if available
+			if n.fsm.ipv4VPNUnicast != nil {
+				n.fsm.ipv4VPNUnicast.adjRIBIn.Register(ac.client)
+			}
 		}
+		
 		if ac.afi == packet.AFIIPv6 {
-			n.fsm.ipv6Unicast.adjRIBIn.Register(ac.client)
+			// Register for IPv6 unicast
+			if n.fsm.ipv6Unicast != nil {
+				n.fsm.ipv6Unicast.adjRIBIn.Register(ac.client)
+			}
+			
+			// Register for IPv6 VPN unicast if available
+			if n.fsm.ipv6VPNUnicast != nil {
+				n.fsm.ipv6VPNUnicast.adjRIBIn.Register(ac.client)
+			}
 		}
 	}
 }

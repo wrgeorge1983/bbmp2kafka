@@ -86,6 +86,16 @@ func (v *VRF) CreateIPv6UnicastLocRIB(name string) (*locRIB.LocRIB, error) {
 	return v.createLocRIB(name, addressFamily{afi: afiIPv6, safi: safiUnicast})
 }
 
+// CreateVPNv4UnicastLocRIB creates a LocRIB for the VPNv4 unicast address family
+func (v *VRF) CreateVPNv4UnicastLocRIB(name string) (*locRIB.LocRIB, error) {
+	return v.createLocRIB(name, addressFamily{afi: afiIPv4, safi: 128})
+}
+
+// CreateVPNv6UnicastLocRIB creates a LocRIB for the VPNv6 unicast address family
+func (v *VRF) CreateVPNv6UnicastLocRIB(name string) (*locRIB.LocRIB, error) {
+	return v.createLocRIB(name, addressFamily{afi: afiIPv6, safi: 128})
+}
+
 // IPv4UnicastRIB returns the local RIB for the IPv4 unicast address family
 func (v *VRF) IPv4UnicastRIB() *locRIB.LocRIB {
 	return v.ribForAddressFamily(addressFamily{afi: afiIPv4, safi: safiUnicast})

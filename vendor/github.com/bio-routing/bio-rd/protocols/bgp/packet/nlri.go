@@ -18,10 +18,11 @@ const (
 
 // NLRI represents a Network Layer Reachability Information
 type NLRI struct {
-	PathIdentifier uint32
-	LabelStack     []LabelStackEntry
-	Prefix         *bnet.Prefix
-	Next           *NLRI
+	PathIdentifier     uint32
+	LabelStack         []LabelStackEntry
+	RouteDistinguisher *RouteDistinguisher
+	Prefix             *bnet.Prefix
+	Next               *NLRI
 }
 
 func decodeNLRIs(buf *bytes.Buffer, length uint16, afi uint16, safi uint8, addPath bool) (*NLRI, error) {
@@ -74,7 +75,8 @@ func decodeNLRI(buf *bytes.Buffer, afi uint16, safi uint8, addPath bool) (*NLRI,
 	}
 	consumed++
 
-	if safi == SAFILabeledUnicast {
+	// Handle label(s) for labeled unicast or VPN routes
+	if safi == SAFILabeledUnicast || safi == SAFIVPNUnicast {
 		nlri.LabelStack = make([]LabelStackEntry, 0, 1)
 		for {
 			lse, err := decodeLabelStackEntry(buf)
@@ -90,6 +92,32 @@ func decodeNLRI(buf *bytes.Buffer, afi uint16, safi uint8, addPath bool) (*NLRI,
 				break
 			}
 		}
+	}
+
+	// Handle Route Distinguisher for VPN routes
+	if safi == SAFIVPNUnicast {
+		if buf.Len() < RouteDistinguisherLength {
+			return nil, consumed, fmt.Errorf("not enough bytes to decode route distinguisher")
+		}
+
+		rdBytes := make([]byte, RouteDistinguisherLength)
+		n, err := buf.Read(rdBytes)
+		if err != nil {
+			return nil, consumed, fmt.Errorf("unable to read route distinguisher: %w", err)
+		}
+		
+		if n != RouteDistinguisherLength {
+			return nil, consumed, fmt.Errorf("expected %d RD bytes, read only %d", RouteDistinguisherLength, n)
+		}
+		
+		rd, err := deserializeRouteDistinguisher(rdBytes)
+		if err != nil {
+			return nil, consumed, fmt.Errorf("unable to decode route distinguisher: %w", err)
+		}
+		
+		nlri.RouteDistinguisher = rd
+		consumed += RouteDistinguisherLength
+		pfxLen -= RouteDistinguisherLength * 8 // Subtract RD bits from prefix length
 	}
 
 	numBytes := uint8(BytesInAddr(pfxLen))
@@ -122,19 +150,31 @@ func (n *NLRI) serialize(buf *bytes.Buffer, addPath bool, safi uint8) uint8 {
 	}
 
 	pfxLen := n.Prefix.Len()
-	if safi == SAFILabeledUnicast {
+	// Account for label stack in prefix length
+	if safi == SAFILabeledUnicast || safi == SAFIVPNUnicast {
 		pfxLen += uint8(len(n.LabelStack) * BitsPerLabel)
+	}
+	
+	// Account for Route Distinguisher in prefix length
+	if safi == SAFIVPNUnicast && n.RouteDistinguisher != nil {
+		pfxLen += RouteDistinguisherLength * 8
 	}
 
 	buf.WriteByte(pfxLen)
 	numBytes++
 
-	if safi == SAFILabeledUnicast {
+	// Write label stack for labeled unicast or VPN routes
+	if safi == SAFILabeledUnicast || safi == SAFIVPNUnicast {
 		labelCount := len(n.LabelStack)
 		for i, l := range n.LabelStack {
 			l.serialize(buf, i == labelCount-1)
 			numBytes += BytesPerLabel
 		}
+	}
+
+	// Write Route Distinguisher for VPN routes
+	if safi == SAFIVPNUnicast && n.RouteDistinguisher != nil {
+		numBytes += n.RouteDistinguisher.Serialize(buf)
 	}
 
 	pfxNumBytes := BytesInAddr(n.Prefix.Len())
