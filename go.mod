@@ -1,14 +1,16 @@
 module github.com/cloudflare/bbmp2kafka
 
-go 1.19
+go 1.20
 
 require (
 	github.com/Shopify/sarama v1.38.1
-	github.com/bio-routing/bio-rd v0.1.7
+	github.com/bio-routing/bio-rd v0.1.9
 	github.com/prometheus/client_golang v1.13.0
 	github.com/sirupsen/logrus v1.6.0
 	google.golang.org/protobuf v1.33.0
 )
+
+// replace github.com/bio-routing/bio-rd => github.com/wrgeorge1983/bio-rd v0.1.10-0.20250318050152-d6b4b22fdf52
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -36,6 +38,9 @@ require (
 	github.com/prometheus/common v0.37.0 // indirect
 	github.com/prometheus/procfs v0.8.0 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
+	go.uber.org/atomic v1.7.0 // indirect
+	go.uber.org/multierr v1.6.0 // indirect
+	go.uber.org/zap v1.24.0 // indirect
 	golang.org/x/crypto v0.21.0 // indirect
 	golang.org/x/net v0.23.0 // indirect
 	golang.org/x/sys v0.18.0 // indirect

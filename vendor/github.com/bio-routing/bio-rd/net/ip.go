@@ -9,11 +9,35 @@ import (
 	bmath "github.com/bio-routing/bio-rd/util/math"
 )
 
+var (
+	v4Loopback = NewPfx(IPv4FromOctets(127, 0, 0, 0), 8).Ptr()
+)
+
 // IP represents an IPv4 or IPv6 address
 type IP struct {
 	higher   uint64
 	lower    uint64
 	isLegacy bool
+}
+
+func (ip IP) IsLoopback() bool {
+	if ip.isLegacy {
+		return ip.isLoopbackV4()
+	}
+
+	return ip.isLoopbackV6()
+}
+
+func (ip IP) isLoopbackV4() bool {
+	return v4Loopback.containsIPv4(NewPfx(ip, 32).Ptr())
+}
+
+func (ip IP) isLoopbackV6() bool {
+	return ip == IP{
+		higher:   0,
+		lower:    1,
+		isLegacy: false,
+	}
 }
 
 // Dedup gets a copy of IP from the cache
@@ -290,7 +314,7 @@ func (ip *IP) SizeBytes() uint8 {
 }
 
 // ToUint32 return the rightmost 32 bits of an 'IP'
-func (ip *IP) ToUint32() uint32 {
+func (ip IP) ToUint32() uint32 {
 	return uint32(^uint64(0) >> 32 & ip.lower)
 }
 

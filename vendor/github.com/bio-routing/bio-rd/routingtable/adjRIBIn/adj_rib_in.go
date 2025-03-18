@@ -8,6 +8,7 @@ import (
 	"github.com/bio-routing/bio-rd/route"
 	"github.com/bio-routing/bio-rd/routingtable"
 	"github.com/bio-routing/bio-rd/routingtable/filter"
+	"github.com/bio-routing/bio-rd/routingtable/vrf"
 	"github.com/bio-routing/bio-rd/util/log"
 )
 
@@ -17,16 +18,16 @@ type AdjRIBIn struct {
 	rt                *routingtable.RoutingTable
 	mu                sync.RWMutex
 	exportFilterChain filter.Chain
-	contributingASNs  *routingtable.ContributingASNs
+	vrf               *vrf.VRF
 	sessionAttrs      routingtable.SessionAttrs
 }
 
 // New creates a new Adjacency RIB In
-func New(exportFilterChain filter.Chain, contributingASNs *routingtable.ContributingASNs, sessionAttrs routingtable.SessionAttrs) *AdjRIBIn {
+func New(exportFilterChain filter.Chain, vrf *vrf.VRF, sessionAttrs routingtable.SessionAttrs) *AdjRIBIn {
 	a := &AdjRIBIn{
 		rt:                routingtable.NewRoutingTable(),
 		exportFilterChain: exportFilterChain,
-		contributingASNs:  contributingASNs,
+		vrf:               vrf,
 		sessionAttrs:      sessionAttrs,
 	}
 	a.clientManager = routingtable.NewClientManager(a)
@@ -181,6 +182,11 @@ func (a *AdjRIBIn) addPath(pfx *net.Prefix, p *route.Path) error {
 		return nil
 	}
 
+	// RFC4277 Sect 8. suggest to set a  use Local Preference as default value for eBGP
+	if !a.sessionAttrs.IBGP && p.BGPPath.BGPPathA.LocalPref == 0 {
+		p.BGPPath.BGPPathA.LocalPref = a.sessionAttrs.DefaultLocalPreference
+	}
+
 	for _, client := range a.clientManager.Clients() {
 		client.AddPath(pfx, p)
 	}
@@ -295,10 +301,10 @@ func (a *AdjRIBIn) validatePath(p *route.Path) uint8 {
 		return route.HiddenReasonOurOriginatorID
 	}
 
-	// RFC4456 Sect. 8: Ignore routes which contain our ClusterID in their ClusterList
+	// RFC4456 Sect. 8: Ignore routes which contains any ClusterID used within this VRF in their ClusterList
 	if p.BGPPath.ClusterList != nil && len(*p.BGPPath.ClusterList) > 0 {
 		for _, cid := range *p.BGPPath.ClusterList {
-			if cid == a.sessionAttrs.ClusterID {
+			if a.vrf.IsContributingClusterID(cid) {
 				return route.HiddenReasonClusterLoop
 			}
 		}
@@ -319,7 +325,7 @@ func (a *AdjRIBIn) ourASNsInPath(p *route.Path) bool {
 
 	for _, pathSegment := range *p.BGPPath.ASPath {
 		for _, asn := range pathSegment.ASNs {
-			if a.contributingASNs.IsContributingASN(asn) {
+			if a.vrf.IsContributingASN(asn) {
 				return true
 			}
 		}

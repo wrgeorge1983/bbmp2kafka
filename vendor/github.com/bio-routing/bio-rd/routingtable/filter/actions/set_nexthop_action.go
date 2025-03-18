@@ -1,7 +1,6 @@
 package actions
 
 import (
-	"github.com/bio-routing/bio-rd/net"
 	bnet "github.com/bio-routing/bio-rd/net"
 	"github.com/bio-routing/bio-rd/route"
 )
@@ -16,13 +15,13 @@ func NewSetNextHopAction(ip *bnet.IP) *SetNextHopAction {
 	}
 }
 
-func (a *SetNextHopAction) Do(p *net.Prefix, pa *route.Path) Result {
-	if pa.BGPPath == nil {
+func (a *SetNextHopAction) Do(p *bnet.Prefix, pa *route.Path) Result {
+	if pa == nil {
 		return Result{Path: pa}
 	}
 
 	modified := pa.Copy()
-	modified.BGPPath.BGPPathA.NextHop = a.ip
+	modified.SetNextHop(a.ip)
 
 	return Result{Path: modified}
 }
@@ -35,9 +34,5 @@ func (a *SetNextHopAction) Equal(b Action) bool {
 		return false
 	}
 
-	if a.ip != b.(*SetNextHopAction).ip {
-		return false
-	}
-
-	return true
+	return a.ip == b.(*SetNextHopAction).ip
 }

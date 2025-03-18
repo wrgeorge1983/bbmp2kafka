@@ -7,7 +7,10 @@ import (
 	"sync"
 
 	"github.com/bio-routing/bio-rd/routingtable/locRIB"
+	"github.com/bio-routing/bio-rd/util/refcounter"
 )
+
+const DefaultVRFName = "main"
 
 const (
 	afiIPv4     = 1
@@ -22,16 +25,18 @@ type addressFamily struct {
 
 // VRF a list of RIBs for different address families building a routing instance
 type VRF struct {
-	name               string
-	routeDistinguisher uint64
-	ribs               map[addressFamily]*locRIB.LocRIB
-	mu                 sync.Mutex
-	ribNames           map[string]*locRIB.LocRIB
+	name                   string
+	routeDistinguisher     uint64
+	ribs                   map[addressFamily]*locRIB.LocRIB
+	mu                     sync.Mutex
+	ribNames               map[string]*locRIB.LocRIB
+	contributingASNs       *refcounter.RefcounterUint32
+	contributingClusterIDs *refcounter.RefcounterUint32
 }
 
 // New creates a new VRF. The VRF is registered automatically to the global VRF registry.
 func New(name string, rd uint64) (*VRF, error) {
-	v := newUntrackedVRF(name, rd)
+	v := NewUntrackedVRF(name, rd)
 	v.CreateIPv4UnicastLocRIB("inet.0")
 	v.CreateIPv6UnicastLocRIB("inet6.0")
 
@@ -43,12 +48,14 @@ func New(name string, rd uint64) (*VRF, error) {
 	return v, nil
 }
 
-func newUntrackedVRF(name string, rd uint64) *VRF {
+func NewUntrackedVRF(name string, rd uint64) *VRF {
 	return &VRF{
-		name:               name,
-		routeDistinguisher: rd,
-		ribs:               make(map[addressFamily]*locRIB.LocRIB),
-		ribNames:           make(map[string]*locRIB.LocRIB),
+		name:                   name,
+		routeDistinguisher:     rd,
+		ribs:                   make(map[addressFamily]*locRIB.LocRIB),
+		ribNames:               make(map[string]*locRIB.LocRIB),
+		contributingASNs:       refcounter.NewRefCounterUint32(),
+		contributingClusterIDs: refcounter.NewRefCounterUint32(),
 	}
 }
 
@@ -108,7 +115,7 @@ func (v *VRF) ribForAddressFamily(family addressFamily) *locRIB.LocRIB {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	rib, _ := v.ribs[family]
+	rib := v.ribs[family]
 
 	return rib
 }
@@ -117,6 +124,36 @@ func (v *VRF) ribForAddressFamily(family addressFamily) *locRIB.LocRIB {
 func (v *VRF) RIBByName(name string) (rib *locRIB.LocRIB, found bool) {
 	rib, found = v.ribNames[name]
 	return rib, found
+}
+
+// AddContributingASN adds the given ASN to the list of ASNs is used by this BGP speaker somewhere within this VRF
+func (v *VRF) AddContributingASN(asn uint32) {
+	v.contributingASNs.Add(asn)
+}
+
+// RemoveContributingASN removes the given ASN from the list of ASNs is used by this BGP speaker somewhere within this VRF
+func (v *VRF) RemoveContributingASN(asn uint32) {
+	v.contributingASNs.Remove(asn)
+}
+
+// IsContributingASN returns wether the given ASN is used by this BGP speaker somewhere within this VRF
+func (v *VRF) IsContributingASN(asn uint32) bool {
+	return v.contributingASNs.IsPresent(asn)
+}
+
+// AddContributingASN adds the given ClusterID to the list of ClusterIDs is used by this BGP speaker somewhere within this VRF
+func (v *VRF) AddContributingClusterID(cid uint32) {
+	v.contributingClusterIDs.Add(cid)
+}
+
+// RemoveContributingASN removes the given ClusterID from the list of ClusterIDs is used by this BGP speaker somewhere within this VRF
+func (v *VRF) RemoveContributingClusterID(cid uint32) {
+	v.contributingClusterIDs.Remove(cid)
+}
+
+// IsContributingASN returns wether the given ClusterID is used by this BGP speaker somewhere within this VRF
+func (v *VRF) IsContributingClusterID(cid uint32) bool {
+	return v.contributingClusterIDs.IsPresent(cid)
 }
 
 func (v *VRF) nameForRIB(rib *locRIB.LocRIB) string {
@@ -154,7 +191,7 @@ func RouteDistinguisherHumanReadable(rdi uint64) string {
 func ParseHumanReadableRouteDistinguisher(x string) (uint64, error) {
 	parts := strings.Split(x, ":")
 	if len(parts) != 2 {
-		return 0, fmt.Errorf("Invalid format")
+		return 0, fmt.Errorf("invalid format")
 	}
 
 	asn, err := strconv.Atoi(parts[0])
@@ -164,7 +201,7 @@ func ParseHumanReadableRouteDistinguisher(x string) (uint64, error) {
 
 	maxUint32 := int(^uint32(0))
 	if asn > maxUint32 {
-		return 0, fmt.Errorf("Invalid format: ASN > max uint32")
+		return 0, fmt.Errorf("invalid format: ASN > max uint32")
 	}
 
 	netID, err := strconv.Atoi(parts[1])
@@ -173,7 +210,7 @@ func ParseHumanReadableRouteDistinguisher(x string) (uint64, error) {
 	}
 
 	if netID > maxUint32 {
-		return 0, fmt.Errorf("Invalid format: Network ID > max uint32")
+		return 0, fmt.Errorf("invalid format: Network ID > max uint32")
 	}
 
 	ret := uint64(0)

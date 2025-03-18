@@ -19,6 +19,7 @@ import (
 	"github.com/bio-routing/bio-rd/route"
 	"github.com/bio-routing/bio-rd/routingtable"
 	"github.com/bio-routing/bio-rd/routingtable/filter"
+	"github.com/bio-routing/bio-rd/routingtable/vrf"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -36,7 +37,7 @@ type adjRIBin struct {
 	tokenBucket  *tokenBucket
 }
 
-func (a *adjRIBInFactory) New(exportFilterChain filter.Chain, contributingASNs *routingtable.ContributingASNs, sessionAttrs routingtable.SessionAttrs) routingtable.AdjRIBIn {
+func (a *adjRIBInFactory) New(exportFilterChain filter.Chain, vrf *vrf.VRF, sessionAttrs routingtable.SessionAttrs) routingtable.AdjRIBIn {
 	return &adjRIBin{
 		sessionAttrs: sessionAttrs,
 		producer:     a.producer,

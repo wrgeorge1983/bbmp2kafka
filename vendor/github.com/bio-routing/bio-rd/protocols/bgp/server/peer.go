@@ -159,16 +159,6 @@ func (p *peer) replaceExportFilterChain(c filter.Chain) {
 	}
 }
 
-type peerAddressFamily struct {
-	rib *locRIB.LocRIB
-
-	importFilterChain filter.Chain
-	exportFilterChain filter.Chain
-
-	addPathSend    routingtable.ClientOptions
-	addPathReceive bool
-}
-
 func (p *peer) dumpRIBIn(afi uint16, safi uint8) []*route.Route {
 	if len(p.fsms) != 1 {
 		return nil
@@ -195,6 +185,16 @@ func (p *peer) dumpRIBOut(afi uint16, safi uint8) []*route.Route {
 	}
 
 	return f.dumpRIBOut()
+}
+
+type peerAddressFamily struct {
+	rib *locRIB.LocRIB
+
+	importFilterChain filter.Chain
+	exportFilterChain filter.Chain
+
+	addPathSend    routingtable.ClientOptions
+	addPathReceive bool
 }
 
 func (p *peer) addressFamily(afi uint16, safi uint8) *peerAddressFamily {
@@ -269,6 +269,7 @@ func newPeer(c PeerConfig, server *bgpServer) (*peer, error) {
 		server:               server,
 		config:               &c,
 		addr:                 c.PeerAddress,
+		localAddr:            c.LocalAddress,
 		ttl:                  c.TTL,
 		passive:              c.Passive,
 		peerASN:              c.PeerAS,
@@ -452,4 +453,19 @@ func (p *peer) stop() {
 
 func (p *peer) isEBGP() bool {
 	return p.localASN != p.peerASN
+}
+
+func (p *peer) getBindDev() string {
+	if p.vrf.Name() != vrf.DefaultVRFName {
+		return p.vrf.Name()
+	}
+
+	return ""
+}
+
+func (p *peer) peerKey() PeerKey {
+	return PeerKey{
+		vrf:        p.vrf,
+		neighborIP: p.addr.Dedup(),
+	}
 }

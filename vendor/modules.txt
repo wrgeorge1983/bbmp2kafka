@@ -4,7 +4,7 @@ github.com/Shopify/sarama
 # github.com/beorn7/perks v1.0.1
 ## explicit; go 1.11
 github.com/beorn7/perks/quantile
-# github.com/bio-routing/bio-rd v0.1.7
+# github.com/bio-routing/bio-rd v0.1.9
 ## explicit; go 1.18
 github.com/bio-routing/bio-rd/metrics/bgp/adapter/prom
 github.com/bio-routing/bio-rd/metrics/bmp/adapter/prom
@@ -33,6 +33,7 @@ github.com/bio-routing/bio-rd/util/decoder
 github.com/bio-routing/bio-rd/util/log
 github.com/bio-routing/bio-rd/util/math
 github.com/bio-routing/bio-rd/util/net
+github.com/bio-routing/bio-rd/util/refcounter
 # github.com/bio-routing/tflow2 v0.0.0-20181230153523-2e308a4a3c3a
 ## explicit
 github.com/bio-routing/tflow2/convert
@@ -163,6 +164,21 @@ github.com/rcrowley/go-metrics
 # github.com/sirupsen/logrus v1.6.0
 ## explicit; go 1.13
 github.com/sirupsen/logrus
+# go.uber.org/atomic v1.7.0
+## explicit; go 1.13
+go.uber.org/atomic
+# go.uber.org/multierr v1.6.0
+## explicit; go 1.12
+go.uber.org/multierr
+# go.uber.org/zap v1.24.0
+## explicit; go 1.19
+go.uber.org/zap
+go.uber.org/zap/buffer
+go.uber.org/zap/internal
+go.uber.org/zap/internal/bufferpool
+go.uber.org/zap/internal/color
+go.uber.org/zap/internal/exit
+go.uber.org/zap/zapcore
 # golang.org/x/crypto v0.21.0
 ## explicit; go 1.18
 golang.org/x/crypto/md4

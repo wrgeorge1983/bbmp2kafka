@@ -95,7 +95,7 @@ func NewPassiveFSM(peer *peer, con *net.TCPConn) *FSM {
 	return fsm
 }
 
-// NewActiveFSM initiates a new passive FSM
+// NewActiveFSM initiates a new active FSM
 func NewActiveFSM(peer *peer) *FSM {
 	fsm := newFSM(peer)
 	fsm.active = true
@@ -274,7 +274,15 @@ func (fsm *FSM) tcpConnector(ctx context.Context) {
 	for {
 		select {
 		case <-fsm.initiateCon:
-			c, err := tcp.Dial(&net.TCPAddr{IP: fsm.local}, &net.TCPAddr{IP: fsm.peer.addr.ToNetIP(), Port: BGPPORT}, fsm.peer.ttl, fsm.peer.config.AuthenticationKey, fsm.peer.ttl == 0)
+			lAddr := net.TCPAddr{
+				IP: fsm.local,
+			}
+			rAddr := net.TCPAddr{
+				IP:   fsm.peer.addr.ToNetIP(),
+				Port: tcp.BGPPORT,
+			}
+
+			c, err := tcp.Dial(&lAddr, &rAddr, fsm.peer.ttl, fsm.peer.config.AuthenticationKey, fsm.peer.ttl == 0, fsm.peer.getBindDev())
 			if err != nil {
 				select {
 				case fsm.conErrCh <- err:

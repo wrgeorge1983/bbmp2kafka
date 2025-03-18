@@ -40,6 +40,13 @@ type BGPPathA struct {
 	OnlyToCustomer  uint32
 }
 
+func NewBGPPath() *BGPPath {
+	return &BGPPath{
+		ASPath:   types.NewASPath([]uint32{}),
+		BGPPathA: NewBGPPathA(),
+	}
+}
+
 // NewBGPPathA creates a new BGPPathA
 func NewBGPPathA() *BGPPathA {
 	defaultAddr := bnet.IPv4(0)
@@ -94,16 +101,12 @@ func (b *BGPPath) ToProto() *api.BGPPath {
 
 	if a.ClusterList != nil {
 		a.ClusterList = make([]uint32, len(*b.ClusterList))
-		for i := range *b.ClusterList {
-			a.ClusterList[i] = (*b.ClusterList)[i]
-		}
+		copy(a.ClusterList, *b.ClusterList)
 	}
 
 	if b.Communities != nil {
 		a.Communities = make([]uint32, len(*b.Communities))
-		for i := range *b.Communities {
-			a.Communities[i] = (*b.Communities)[i]
-		}
+		copy(a.Communities, *b.Communities)
 	}
 
 	if b.LargeCommunities != nil {
@@ -143,32 +146,34 @@ func BGPPathFromProtoBGPPath(pb *api.BGPPath, dedup bool) *BGPPath {
 		p = p.Dedup()
 	}
 
-	communities := make(types.Communities, len(pb.Communities))
-	p.Communities = &communities
-
-	largeCommunities := make(types.LargeCommunities, len(pb.LargeCommunities))
-	p.LargeCommunities = &largeCommunities
-
-	unknownAttr := make([]types.UnknownPathAttribute, len(pb.UnknownAttributes))
-	p.UnknownAttributes = unknownAttr
-
-	cl := make(types.ClusterList, len(pb.ClusterList))
-	p.ClusterList = &cl
-
-	for i := range pb.Communities {
-		(*p.Communities)[i] = pb.Communities[i]
+	if len(pb.Communities) > 0 {
+		communities := make(types.Communities, len(pb.Communities))
+		p.Communities = &communities
+		copy(*p.Communities, pb.Communities)
 	}
 
-	for i := range pb.LargeCommunities {
-		(*p.LargeCommunities)[i] = types.LargeCommunityFromProtoCommunity(pb.LargeCommunities[i])
+	if len(pb.LargeCommunities) > 0 {
+		largeCommunities := make(types.LargeCommunities, len(pb.LargeCommunities))
+		p.LargeCommunities = &largeCommunities
+
+		for i := range pb.LargeCommunities {
+			(*p.LargeCommunities)[i] = types.LargeCommunityFromProtoCommunity(pb.LargeCommunities[i])
+		}
 	}
 
-	for i := range pb.UnknownAttributes {
-		p.UnknownAttributes[i] = types.UnknownPathAttributeFromProtoUnknownPathAttribute(pb.UnknownAttributes[i])
+	if len(pb.UnknownAttributes) > 0 {
+		unknownAttr := make([]types.UnknownPathAttribute, len(pb.UnknownAttributes))
+		p.UnknownAttributes = unknownAttr
+
+		for i := range pb.UnknownAttributes {
+			p.UnknownAttributes[i] = types.UnknownPathAttributeFromProtoUnknownPathAttribute(pb.UnknownAttributes[i])
+		}
 	}
 
-	for i := range pb.ClusterList {
-		(*p.ClusterList)[i] = pb.ClusterList[i]
+	if (len(pb.ClusterList)) > 0 {
+		cl := make(types.ClusterList, len(pb.ClusterList))
+		p.ClusterList = &cl
+		copy(*p.ClusterList, pb.ClusterList)
 	}
 
 	return p
@@ -687,6 +692,7 @@ func (b *BGPPath) Copy() *BGPPath {
 	}
 
 	cp := *b
+	cp.BGPPathA = b.BGPPathA.Copy()
 
 	if cp.ASPath != nil {
 		asPath := make(types.ASPath, len(*cp.ASPath))
@@ -713,6 +719,16 @@ func (b *BGPPath) Copy() *BGPPath {
 	}
 
 	return &cp
+}
+
+func (bpa *BGPPathA) Copy() *BGPPathA {
+	if bpa == nil {
+		return nil
+	}
+
+	newBPA := *bpa
+
+	return &newBPA
 }
 
 // ComputeHash computes an hash over all attributes of the path
@@ -796,4 +812,12 @@ func (b *BGPPath) LargeCommunitiesString() string {
 	}
 
 	return str.String()
+}
+
+func (b *BGPPath) GetNextHop() *bnet.IP {
+	if b == nil || b.BGPPathA == nil {
+		return nil
+	}
+
+	return b.BGPPathA.NextHop
 }

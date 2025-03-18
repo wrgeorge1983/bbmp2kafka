@@ -23,7 +23,7 @@ type RouterInterface interface {
 	Address() net.IP
 	GetVRF(vrfID uint64) *vrf.VRF
 	GetVRFs() []*vrf.VRF
-	Ready(vrf uint64, afi uint16) bool
+	Ready(vrf uint64, afi uint16) (bool, error)
 }
 
 // RouterConfig represents the configuration required for BMP router
@@ -105,14 +105,14 @@ func newRouter(addr net.IP, port uint16, arif adjRIBInFactoryI, config RouterCon
 	}
 }
 
-func (r *Router) Ready(vrf uint64, afi uint16) bool {
+func (r *Router) Ready(vrf uint64, afi uint16) (bool, error) {
 	neighbors := r.neighborManager.list()
 	if len(neighbors) == 0 {
-		return false
+		return false, fmt.Errorf("no neighbor present")
 	}
 
 	if !neighborsIncludeVRF(neighbors, vrf) {
-		return false
+		return false, fmt.Errorf("vrf not present for neighbor")
 	}
 
 	for _, n := range neighbors {
@@ -128,11 +128,11 @@ func (r *Router) Ready(vrf uint64, afi uint16) bool {
 		}
 
 		if !fsmAfi.endOfRIBMarkerReceived.Load() {
-			return false
+			return false, fmt.Errorf("end of rib not yet received")
 		}
 	}
 
-	return true
+	return true, nil
 }
 
 func neighborsIncludeVRF(neighbors []*neighbor, vrfID uint64) bool {
@@ -147,7 +147,7 @@ func neighborsIncludeVRF(neighbors []*neighbor, vrfID uint64) bool {
 
 // GetVRF get's a VRF
 func (r *Router) GetVRF(rd uint64) *vrf.VRF {
-	return r.vrfRegistry.GetVRFByRD(rd)
+	return r.vrfRegistry.GetVRFByName(vrf.RouteDistinguisherHumanReadable(rd))
 }
 
 // GetVRFs gets all VRFs
@@ -226,14 +226,12 @@ func (r *Router) processMsg(msg []byte) {
 func (r *Router) processRouteMonitoringMsg(msg *bmppkt.RouteMonitoringMsg) {
 	atomic.AddUint64(&r.counters.routeMonitoringMessages, 1)
 
-	// Ignore pre- / post-policy UPDATEs if configured
-	if r.ignorePrePolicy && !msg.PerPeerHeader.GetLFlag() {
-		return
-	}
-	if r.ignorePostPolicy && msg.PerPeerHeader.GetLFlag() {
+	// Ignore pre / post policy messages if configured
+	if r.ignorePrePolicy && !msg.PerPeerHeader.GetLFlag() || r.ignorePostPolicy && msg.PerPeerHeader.GetLFlag() {
 		return
 	}
 
+	// Ignore messages for peers with ASN found in ignorePeerASNs
 	if _, exists := r.ignoredPeers[peerAddrToBNetAddr(msg.PerPeerHeader.PeerAddress, msg.PerPeerHeader.GetIPVersion())]; exists {
 		return
 	}
@@ -328,19 +326,16 @@ func (r *Router) processTerminationMsg(msg *bmppkt.TerminationMessage) {
 }
 
 func (r *Router) processPeerDownNotification(msg *bmppkt.PeerDownNotification) {
-	log.WithFields(log.Fields{
-		"address":            r.address.String(),
-		"router":             r.name,
-		"peer_distinguisher": vrf.RouteDistinguisherHumanReadable(msg.PerPeerHeader.PeerDistinguisher),
-		"peer_address":       addrToNetIP(msg.PerPeerHeader.PeerAddress).String(),
-	}).Infof("peer down notification received")
 	atomic.AddUint64(&r.counters.peerDownNotificationMessages, 1)
 
 	peerAddr := peerAddrToBNetAddr(msg.PerPeerHeader.PeerAddress, msg.PerPeerHeader.GetIPVersion())
 	if _, exists := r.ignoredPeers[peerAddr]; exists {
 		delete(r.ignoredPeers, peerAddr)
+		logPeerUpDownNotification(r, msg.PerPeerHeader.PeerAddress, msg.PerPeerHeader.PeerDistinguisher, false, true)
 		return
 	}
+
+	logPeerUpDownNotification(r, msg.PerPeerHeader.PeerAddress, msg.PerPeerHeader.PeerDistinguisher, false, false)
 
 	err := r.neighborManager.neighborDown(msg.PerPeerHeader.PeerDistinguisher, msg.PerPeerHeader.PeerAddress)
 	if err != nil {
@@ -371,20 +366,17 @@ func (r *Router) isIgnoredPeerASN(asn uint32) bool {
 
 func (r *Router) processPeerUpNotification(msg *bmppkt.PeerUpNotification) error {
 	atomic.AddUint64(&r.counters.peerUpNotificationMessages, 1)
-	log.WithFields(log.Fields{
-		"address":            r.address.String(),
-		"router":             r.name,
-		"peer_distinguisher": vrf.RouteDistinguisherHumanReadable(msg.PerPeerHeader.PeerDistinguisher),
-		"peer_address":       addrToNetIP(msg.PerPeerHeader.PeerAddress).String(),
-	}).Infof("peer up notification received")
 
 	peerAddress := peerAddrToBNetAddr(msg.PerPeerHeader.PeerAddress, msg.PerPeerHeader.GetIPVersion())
 	localAddress := peerAddrToBNetAddr(msg.LocalAddress, msg.PerPeerHeader.GetIPVersion())
 
 	if r.isIgnoredPeerASN(msg.PerPeerHeader.PeerAS) {
 		r.ignoredPeers[peerAddress] = struct{}{}
+		logPeerUpDownNotification(r, msg.PerPeerHeader.PeerAddress, msg.PerPeerHeader.PeerDistinguisher, true, true)
 		return nil
 	}
+
+	logPeerUpDownNotification(r, msg.PerPeerHeader.PeerAddress, msg.PerPeerHeader.PeerDistinguisher, true, false)
 
 	if len(msg.SentOpenMsg) < packet.MinOpenLen {
 		return fmt.Errorf("received peer up notification for %v: Invalid sent open message: %v", msg.PerPeerHeader.PeerAddress, msg.SentOpenMsg)
@@ -416,7 +408,7 @@ func (r *Router) processPeerUpNotification(msg *bmppkt.PeerUpNotification) error
 			localASN:        uint32(sentOpen.ASN),
 			ipv4:            &peerAddressFamily{},
 			ipv6:            &peerAddressFamily{},
-			vrf:             r.vrfRegistry.CreateVRFIfNotExists(fmt.Sprintf("%d", msg.PerPeerHeader.PeerDistinguisher), msg.PerPeerHeader.PeerDistinguisher),
+			vrf:             r.vrfRegistry.CreateVRFIfNotExists(vrf.RouteDistinguisherHumanReadable(msg.PerPeerHeader.PeerDistinguisher), msg.PerPeerHeader.PeerDistinguisher),
 			adjRIBInFactory: r.adjRIBInFactory,
 		},
 	}
@@ -542,4 +534,19 @@ func addrToNetIP(a [16]byte) net.IP {
 	}
 
 	return net.IP(a[12:])
+}
+
+func logPeerUpDownNotification(r *Router, peerAddr [16]byte, RD uint64, up bool, ignored bool) {
+	msg := "peer down notification received"
+	if up {
+		msg = "peer up notification received"
+	}
+
+	log.WithFields(log.Fields{
+		"address":            r.address.String(),
+		"router":             r.name,
+		"peer_address":       addrToNetIP(peerAddr).String(),
+		"peer_distinguisher": vrf.RouteDistinguisherHumanReadable(RD),
+		"ignored":            ignored,
+	}).Infof(msg)
 }

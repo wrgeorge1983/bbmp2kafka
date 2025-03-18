@@ -14,12 +14,11 @@ import (
 
 // LocRIB represents a routing information base
 type LocRIB struct {
-	name             string
-	clientManager    *routingtable.ClientManager
-	rt               *routingtable.RoutingTable
-	mu               sync.RWMutex
-	contributingASNs *routingtable.ContributingASNs
-	countTarget      *countTarget
+	name          string
+	clientManager *routingtable.ClientManager
+	rt            *routingtable.RoutingTable
+	mu            sync.RWMutex
+	countTarget   *countTarget
 }
 
 type countTarget struct {
@@ -30,9 +29,8 @@ type countTarget struct {
 // New creates a new routing information base
 func New(name string) *LocRIB {
 	a := &LocRIB{
-		name:             name,
-		rt:               routingtable.NewRoutingTable(),
-		contributingASNs: routingtable.NewContributingASNs(),
+		name: name,
+		rt:   routingtable.NewRoutingTable(),
 	}
 	a.clientManager = routingtable.NewClientManager(a)
 
@@ -49,11 +47,6 @@ func (a *LocRIB) EndOfRIB() {}
 // ClientCount gets the number of registered clients
 func (a *LocRIB) ClientCount() uint64 {
 	return a.clientManager.ClientCount()
-}
-
-// GetContributingASNs returns a pointer to the list of contributing ASNs
-func (a *LocRIB) GetContributingASNs() *routingtable.ContributingASNs {
-	return a.contributingASNs
 }
 
 // Count routes from the LocRIB
@@ -112,8 +105,9 @@ func (a *LocRIB) UpdateNewClient(client routingtable.RouteTableClient) error {
 		}
 
 		for _, p := range r.Paths()[:n] {
-			client.AddPathInitialDump(r.Prefix(), p)
+			client.AddPathInitialDump(r.Prefix(), p.Copy())
 		}
+
 	}
 
 	client.EndOfRIB()
@@ -303,7 +297,7 @@ func (a *LocRIB) String() string {
 		if idx < len(routes)-1 {
 			ret += fmt.Sprintf("%s, ", r.Prefix().String())
 		} else {
-			ret += fmt.Sprintf("%s", r.Prefix().String())
+			ret += r.Prefix().String()
 		}
 	}
 
@@ -318,6 +312,9 @@ func (a *LocRIB) Print() string {
 	routes := a.rt.Dump()
 	for _, r := range routes {
 		ret += fmt.Sprintf("%s\n", r.Prefix().String())
+		for _, p := range r.Paths() {
+			ret += fmt.Sprintf("  %s\n", p.String())
+		}
 	}
 
 	return ret
@@ -338,16 +335,6 @@ func (a *LocRIB) Unregister(client routingtable.RouteTableClient) {
 	a.clientManager.Unregister(client)
 }
 
-// ReplaceFilterChain is here to fulfill an interface
-func (a *LocRIB) ReplaceFilterChain(filter.Chain) {
-	return
-}
-
-// RefreshRoute is here to fulfill an interface
-func (a *LocRIB) RefreshRoute(*net.Prefix, []*route.Path) {
-
-}
-
 // Dispose tells all clients that this LocRIB is not to be used anymore (this can happen when RIS loses a BMP connection)
 func (a *LocRIB) Dispose() {
 	for _, c := range a.clientManager.Clients() {
@@ -355,3 +342,9 @@ func (a *LocRIB) Dispose() {
 		a.clientManager.Unregister(c)
 	}
 }
+
+// ReplaceFilterChain is here to fulfill an interface
+func (a *LocRIB) ReplaceFilterChain(filter.Chain) {}
+
+// RefreshRoute is here to fulfill an interface
+func (a *LocRIB) RefreshRoute(*net.Prefix, []*route.Path) {}

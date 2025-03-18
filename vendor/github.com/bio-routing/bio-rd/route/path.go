@@ -21,12 +21,14 @@ const (
 
 // Path represents a network path
 type Path struct {
-	Type         uint8
-	HiddenReason uint8  // If set, Path is hidden and ineligible to be installed in LocRIB and used for path selection
-	LTime        uint32 // The time we learned this path, as unix epoch (seconds)
-	StaticPath   *StaticPath
-	BGPPath      *BGPPath
-	FIBPath      *FIBPath
+	Type              uint8
+	RedistributedFrom uint8
+	HiddenReason      uint8  // If set, Path is hidden and ineligible to be installed in LocRIB and used for path selection
+	LTime             uint32 // The time we learned this path, as unix epoch (seconds)
+	StaticPath        *StaticPath
+	BGPPath           *BGPPath
+	FIBPath           *FIBPath
+	GRPPath           *GRPPath
 }
 
 // Select returns negative if p < q, 0 if paths are equal, positive if p > q
@@ -56,6 +58,8 @@ func (p *Path) Select(q *Path) int8 {
 		return p.StaticPath.Select(q.StaticPath)
 	case FIBPathType:
 		return p.FIBPath.Select(q.FIBPath)
+	case GRPPathType:
+		return p.GRPPath.Select(q.GRPPath)
 	}
 
 	return 0
@@ -80,6 +84,7 @@ func (p *Path) ToProto() *api.Path {
 	a := &api.Path{
 		StaticPath:  p.StaticPath.ToProto(),
 		BgpPath:     p.BGPPath.ToProto(),
+		GrpPath:     p.GRPPath.ToProto(),
 		TimeLearned: p.LTime,
 	}
 
@@ -88,6 +93,8 @@ func (p *Path) ToProto() *api.Path {
 		a.Type = api.Path_Static
 	case BGPPathType:
 		a.Type = api.Path_BGP
+	case GRPPathType:
+		a.Type = api.Path_GRP
 	}
 
 	switch p.HiddenReason {
@@ -125,6 +132,8 @@ func (p *Path) Compare(q *Path) bool {
 		return p.BGPPath.Compare(q.BGPPath)
 	case StaticPathType:
 		return p.StaticPath.Compare(q.StaticPath)
+	case GRPPathType:
+		return p.GRPPath.Compare(q.GRPPath)
 	}
 
 	return false
@@ -145,6 +154,8 @@ func (p *Path) Equal(q *Path) bool {
 		return p.BGPPath.Equal(q.BGPPath)
 	case StaticPathType:
 		return p.StaticPath.Equal(q.StaticPath)
+	case GRPPathType:
+		return p.GRPPath.Equal(q.GRPPath)
 	}
 
 	return p.Select(q) == 0
@@ -175,37 +186,34 @@ func pathsContains(needle *Path, haystack []*Path) bool {
 
 // Print all known information about a route in logfile friendly format
 func (p *Path) String() string {
+	pathInfo := ""
+
 	switch p.Type {
 	case StaticPathType:
-		return "not implemented yet"
+		pathInfo = p.StaticPath.String()
 	case BGPPathType:
-		return p.BGPPath.String()
+		pathInfo = p.BGPPath.String()
 	case FIBPathType:
-		return p.FIBPath.String()
+		pathInfo = p.FIBPath.String()
+	case GRPPathType:
+		pathInfo = p.GRPPath.String()
 	default:
 		return fmt.Sprintf("Unknown path type. Probably not implemented yet (%d)", p.Type)
 	}
+
+	return fmt.Sprintf("Protocol: %s, %s", GetPathTypeName(p.Type), pathInfo)
 }
 
 // Print all known information about a route in human readable form
 func (p *Path) Print() string {
 	buf := &strings.Builder{}
 
-	protocol := ""
-	switch p.Type {
-	case StaticPathType:
-		protocol = "static"
-	case BGPPathType:
-		protocol = "BGP"
-	case FIBPathType:
-		protocol = "Netlink"
-	}
+	fmt.Fprintf(buf, "\tProtocol: %s\n", GetPathTypeName(p.Type))
 
-	fmt.Fprintf(buf, "\tProtocol: %s\n", protocol)
-
-	hr := p.HiddenReasonString()
-	if hr != "" {
-		fmt.Fprintf(buf, "\tHidden Reason: %s\n", hr)
+	if p.IsHidden() {
+		fmt.Fprintf(buf, "\tHidden: yes (%s)\n", p.HiddenReasonString())
+	} else {
+		fmt.Fprintf(buf, "\tHidden: no\n")
 	}
 
 	if p.LTime != 0 {
@@ -215,11 +223,13 @@ func (p *Path) Print() string {
 
 	switch p.Type {
 	case StaticPathType:
-		buf.WriteString("Not implemented yet")
+		buf.WriteString(p.StaticPath.Print())
 	case BGPPathType:
 		buf.WriteString(p.BGPPath.Print())
 	case FIBPathType:
 		buf.WriteString(p.FIBPath.Print())
+	case GRPPathType:
+		buf.WriteString(p.GRPPath.Print())
 	}
 
 	return buf.String()
@@ -234,6 +244,7 @@ func (p *Path) Copy() *Path {
 	cp := *p
 	cp.BGPPath = cp.BGPPath.Copy()
 	cp.StaticPath = cp.StaticPath.Copy()
+	cp.GRPPath = cp.GRPPath.Copy()
 
 	return &cp
 }
@@ -247,6 +258,8 @@ func (p *Path) NextHop() *bnet.IP {
 		return p.StaticPath.NextHop
 	case FIBPathType:
 		return p.FIBPath.NextHop
+	case GRPPathType:
+		return p.GRPPath.NextHop
 	}
 
 	panic("Unknown path type")
@@ -277,4 +290,72 @@ func (p *Path) HiddenReasonString() string {
 	default:
 		return "unknown"
 	}
+}
+
+func (p *Path) GetNextHop() *bnet.IP {
+	switch p.Type {
+	case BGPPathType:
+		return p.BGPPath.GetNextHop()
+	case StaticPathType:
+		return p.StaticPath.GetNextHop()
+	case GRPPathType:
+		return p.GRPPath.GetNextHop()
+	}
+
+	return nil
+}
+
+func (p *Path) SetNextHop(newNH *bnet.IP) {
+	switch p.Type {
+	case BGPPathType:
+		if p.BGPPath != nil && p.BGPPath.BGPPathA != nil {
+			p.BGPPath.BGPPathA.NextHop = newNH
+		}
+	case StaticPathType:
+		if p.StaticPath != nil {
+			p.StaticPath.NextHop = newNH
+		}
+	case GRPPathType:
+		if p.GRPPath != nil {
+			p.GRPPath.NextHop = newNH
+		}
+	}
+}
+
+func GetPathTypeName(t uint8) string {
+	switch t {
+	case BGPPathType:
+		return "BGP"
+	case FIBPathType:
+		return "Netlink"
+	case StaticPathType:
+		return "static"
+	default:
+		return "unknown"
+	}
+}
+
+// CheckRedistribute checks if the give paths needs to be redistributed and updates the path type, if so.
+// It always returns a copy of the given Path which needs to be deduped by the receiver.
+func (p *Path) CheckRedistribute(newPathType uint8) (*Path, bool) {
+	// We must never manipulate the existing path
+	p = p.Copy()
+
+	if p.Type == newPathType {
+		p.RedistributedFrom = 0
+		return p, false
+	}
+
+	// Store previous path type so we know where to look for attributes, which we might want to copy over,
+	// derive values from, or work with otherwise, e.g. in filters. Protocol dependent redistribution logic
+	// needs to be implemented in the respective routing tables, e.g. AdjRIBOut, as we might need protocol
+	// specific information to compute path attributes.
+	p.RedistributedFrom = p.Type
+	p.Type = newPathType
+
+	return p, true
+}
+
+func (p *Path) IsRedistributed() bool {
+	return p.RedistributedFrom != 0
 }
